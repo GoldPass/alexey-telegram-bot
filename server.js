@@ -378,3 +378,11 @@ process.on('uncaughtException', (error) => {
     console.error('❌ Uncaught Exception:', error);
     process.exit(1);
 });
+process.on('SIGTERM', () => {
+  console.log('🛑 Получен SIGTERM, остановка...');
+  bot.stop('SIGTERM');
+  server.close(() => {
+    console.log('🚫 Сервер остановлен');
+    process.exit(0);
+  });
+});
