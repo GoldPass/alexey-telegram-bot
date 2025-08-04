@@ -1,27 +1,26 @@
 require('dotenv').config();
 
-// Полностью подавляем все предупреждения Node.js
-process.removeAllListeners('warning');
-process.on('warning', () => {});
+// Подавляем только конкретные предупреждения
+const suppressedWarnings = ['DEP0040']; // punycode и другие
+process.on('warning', (warning) => {
+  if (!suppressedWarnings.includes(warning.name)) {
+    console.warn(warning.name, warning.message);
+  }
+});
+
+console.log('🚀 Запуск AI Telegram бота...');
 
 const express = require('express');
 const { Telegraf } = require('telegraf');
 const axios = require('axios');
 
-console.log('🚀 Запуск AI Telegram бота...');
-
 // Проверяем переменные окружения
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
-if (!BOT_TOKEN) {
-    console.error('❌ BOT_TOKEN не найден! Добавьте его в переменные окружения.');
-    process.exit(1);
-}
-
-if (!GEMINI_API_KEY) {
-    console.error('❌ GEMINI_API_KEY не найден! Добавьте его в переменные окружения.');
-    process.exit(1);
+if (!BOT_TOKEN || !GEMINI_API_KEY) {
+  console.error('❌ Токены не найдены! Проверьте переменные окружения.');
+  process.exit(1);
 }
 
 console.log('✅ Токены найдены');
@@ -33,6 +32,7 @@ const bot = new Telegraf(BOT_TOKEN, {
     webhookReply: false
   }
 });
+
 
 // Middleware для парсинга JSON
 app.use(express.json());
@@ -53,7 +53,7 @@ bot.start((ctx) => {
 
 Просто напишите мне любой вопрос, и я постараюсь помочь! 😊
 
-Разработчик: (Алексей)
+Разработчик: Алексей
 `;
     ctx.reply(welcomeMessage);
 });
