@@ -357,25 +357,46 @@ app.post('/webhook', (req, res) => {
     res.sendStatus(200);
 });
 
+// ... (весь предыдущий код до блока запуска)
+
 // Запуск сервера
 const PORT = process.env.PORT || 3000;
 
 // Ссылка на сервер Express
 let serverInstance = null;
 
-// Сначала запускаем бота
-bot.launch().then(() => {
+// Сначала удаляем возможные вебхуки
+async function initializeBot() {
+  try {
+    // Удаляем все вебхуки
+    await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+    console.log('🪝 Вебхук удален');
+
+    // Запускаем бота в режиме long-polling
+    await bot.launch();
     console.log('🤖 Telegram бот запущен и готов к работе!');
 
     // Затем запускаем веб-сервер
     serverInstance = app.listen(PORT, '0.0.0.0', () => {
-        console.log(`🌐 Веб-сервер запущен на порту ${PORT}`);
-        console.log(`🚀 Всё готово! Время: ${new Date().toLocaleString('ru-RU')}`);
+      console.log(`🌐 Веб-сервер запущен на порту ${PORT}`);
+      console.log(`🚀 Всё готово! Время: ${new Date().toLocaleString('ru-RU')}`);
     });
-}).catch((error) => {
+  } catch (error) {
     console.error('❌ Ошибка запуска бота:', error);
-    process.exit(1);
-});
+    
+    // Если это ошибка 409, попробуем через 5 секунд
+    if (error.description && error.description.includes('Conflict')) {
+      console.log('⏱ Повторная попытка через 5 секунд...');
+      setTimeout(initializeBot, 5000);
+    } else {
+      process.exit(1);
+    }
+  }
+}
+
+initializeBot();
+
+// ... (остальная часть кода с обработчиками сигналов и ошибок)
 
 // Graceful shutdown
 process.once('SIGINT', () => {
