@@ -1,4 +1,11 @@
 require('dotenv').config();
+// Временная диагностика
+console.log('====== ПРОВЕРКА ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ======');
+console.log('BOT_TOKEN:', process.env.BOT_TOKEN ? 'ЕСТЬ' : 'НЕТ');
+console.log('GEMINI_API_KEY:', process.env.GEMINI_API_KEY ? 'ЕСТЬ' : 'НЕТ');
+console.log('PORT:', process.env.PORT || 'не указан');
+console.log('NODE_ENV:', process.env.NODE_ENV || 'не указан');
+console.log('==========================================');
 const express = require('express');
 const { Telegraf } = require('telegraf');
 const axios = require('axios');
