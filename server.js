@@ -1,11 +1,13 @@
 require('dotenv').config();
-// Временная диагностика
+
+// Временная диагностика переменных окружения
 console.log('====== ПРОВЕРКА ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ======');
 console.log('BOT_TOKEN:', process.env.BOT_TOKEN ? 'ЕСТЬ' : 'НЕТ');
 console.log('GEMINI_API_KEY:', process.env.GEMINI_API_KEY ? 'ЕСТЬ' : 'НЕТ');
 console.log('PORT:', process.env.PORT || 'не указан');
 console.log('NODE_ENV:', process.env.NODE_ENV || 'не указан');
 console.log('==========================================');
+
 const express = require('express');
 const { Telegraf } = require('telegraf');
 const axios = require('axios');
@@ -357,26 +359,25 @@ app.post('/webhook', (req, res) => {
     res.sendStatus(200);
 });
 
-// ... (весь предыдущий код до блока запуска)
-
 // Запуск сервера
 const PORT = process.env.PORT || 3000;
-
-// Ссылка на сервер Express
 let serverInstance = null;
 
-// Сначала удаляем возможные вебхуки
+// Инициализация бота
 async function initializeBot() {
   try {
-    // Удаляем все вебхуки
+    console.log('⏳ Ожидание 5 секунд перед запуском...');
+    await new Promise(resolve => setTimeout(resolve, 5000));
+    
+    console.log('🪝 Удаляем вебхук...');
     await bot.telegram.deleteWebhook({ drop_pending_updates: true });
-    console.log('🪝 Вебхук удален');
+    console.log('✅ Вебхук удален');
 
-    // Запускаем бота в режиме long-polling
+    console.log('🚀 Запускаем бота...');
     await bot.launch();
     console.log('🤖 Telegram бот запущен и готов к работе!');
 
-    // Затем запускаем веб-сервер
+    // Запускаем веб-сервер
     serverInstance = app.listen(PORT, '0.0.0.0', () => {
       console.log(`🌐 Веб-сервер запущен на порту ${PORT}`);
       console.log(`🚀 Всё готово! Время: ${new Date().toLocaleString('ru-RU')}`);
@@ -389,32 +390,40 @@ async function initializeBot() {
       console.log('⏱ Повторная попытка через 5 секунд...');
       setTimeout(initializeBot, 5000);
     } else {
+      console.error('❌ Критическая ошибка, завершение работы');
       process.exit(1);
     }
   }
 }
 
+// Запускаем инициализацию бота
 initializeBot();
-
-// ... (остальная часть кода с обработчиками сигналов и ошибок)
 
 // Graceful shutdown
 process.once('SIGINT', () => {
     console.log('🛑 Получен SIGINT, остановка...');
     bot.stop('SIGINT');
-    serverInstance?.close(() => {
-        console.log('🚫 Сервер остановлен');
+    if (serverInstance) {
+        serverInstance.close(() => {
+            console.log('🚫 Сервер остановлен');
+            process.exit(0);
+        });
+    } else {
         process.exit(0);
-    });
+    }
 });
 
 process.once('SIGTERM', () => {
     console.log('🛑 Получен SIGTERM, остановка...');
     bot.stop('SIGTERM');
-    serverInstance?.close(() => {
-        console.log('🚫 Сервер остановлен');
+    if (serverInstance) {
+        serverInstance.close(() => {
+            console.log('🚫 Сервер остановлен');
+            process.exit(0);
+        });
+    } else {
         process.exit(0);
-    });
+    }
 });
 
 // Обработка неожиданных ошибок
