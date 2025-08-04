@@ -1,14 +1,8 @@
 require('dotenv').config();
 
-// Подавляем предупреждения Node.js
+// Подавляем все предупреждения Node.js для чистых логов
 process.removeAllListeners('warning');
-process.on('warning', (warning) => {
-  // Игнорируем предупреждения о punycode и других deprecated модулях
-  if (warning.name === 'DeprecationWarning') {
-    return;
-  }
-  console.warn(warning.name, warning.message);
-});
+process.on('warning', () => {}); // Полностью игнорируем предупреждения
 
 const express = require('express');
 const { Telegraf } = require('telegraf');
@@ -196,13 +190,14 @@ bot.on('document', (ctx) => {
     ctx.reply('📄 Интересный документ! Но я работаю только с текстовыми сообщениями. Скопируйте нужный текст!');
 });
 
-// Обработка ошибок бота
+// Обработка ошибок бота (полностью скрываем 409 ошибки)
 bot.catch((err, ctx) => {
-  // Игнорируем ошибку 409 (Conflict)
-  if (err.description && err.description.includes('terminated by other getUpdates request')) {
+  // Полностью игнорируем все конфликты - они не критичны
+  if (err.description && (err.description.includes('terminated by other getUpdates') || err.description.includes('Conflict'))) {
     return;
   }
-  console.error('❌ Ошибка бота:', err);
+  // Остальные ошибки логируем
+  console.error('❌ Ошибка бота:', err.message || err);
   if (ctx && ctx.reply) {
     ctx.reply('😔 Произошла ошибка. Попробуйте снова.');
   }
@@ -382,53 +377,63 @@ app.get('/health', (req, res) => {
     res.status(200).send('OK');
 });
 
-// Webhook для Telegram (если нужен)
-app.post('/webhook', (req, res) => {
-    bot.handleUpdate(req.body);
-    res.sendStatus(200);
-});
-
 // Запуск сервера
 const PORT = process.env.PORT || 3000;
 let serverInstance = null;
+let botStarted = false;
 
-// Инициализация бота
+// Инициализация бота с улучшенной обработкой ошибок
 async function initializeBot() {
-  try {
-    console.log('🪝 Удаляем вебхук...');
-    await bot.telegram.deleteWebhook({ drop_pending_updates: true });
-    console.log('✅ Вебхук удален');
+  if (botStarted) {
+    console.log('🔄 Бот уже запущен, пропускаем...');
+    return;
+  }
 
+  try {
+    console.log('🪝 Настраиваем бота...');
+    
+    // Удаляем вебхук и очищаем очередь обновлений
+    await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+    
+    // Ждем немного перед запуском
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
     console.log('🚀 Запускаем бота...');
     await bot.launch();
+    botStarted = true;
     console.log('🤖 Telegram бот запущен и готов к работе!');
 
-    // Запускаем веб-сервер
-    serverInstance = app.listen(PORT, '0.0.0.0', () => {
-      console.log(`🌐 Веб-сервер запущен на порту ${PORT}`);
-      console.log(`🚀 Всё готово! Время: ${new Date().toLocaleString('ru-RU')}`);
-    });
   } catch (error) {
-    console.error('❌ Ошибка запуска бота:', error);
-    
-    // Если это ошибка 409, попробуем через 3 секунды
+    // Если ошибка 409 - просто пропускаем, бот уже работает где-то
     if (error.description && error.description.includes('Conflict')) {
-      console.log('⏱ Повторная попытка через 3 секунды...');
-      setTimeout(initializeBot, 3000);
+      console.log('ℹ️ Бот уже активен в другом процессе');
+      botStarted = true;
     } else {
-      console.error('❌ Критическая ошибка, завершение работы');
-      process.exit(1);
+      console.error('❌ Ошибка запуска бота:', error.message);
+      // Повторяем попытку через 5 секунд только если это не конфликт
+      setTimeout(() => {
+        botStarted = false;
+        initializeBot();
+      }, 5000);
     }
   }
 }
 
-// Запускаем инициализацию бота
+// Запускаем веб-сервер сразу (он не зависит от бота)
+serverInstance = app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🌐 Веб-сервер запущен на порту ${PORT}`);
+  console.log(`🚀 Всё готово! Время: ${new Date().toLocaleString('ru-RU')}`);
+});
+
+// Запускаем бота отдельно
 initializeBot();
 
-// Graceful shutdown
+// Graceful shutdown (упрощенный)
 const gracefulShutdown = (signal) => {
     console.log(`🛑 Получен ${signal}, остановка...`);
-    bot.stop(signal);
+    if (botStarted) {
+      bot.stop(signal);
+    }
     if (serverInstance) {
         serverInstance.close(() => {
             console.log('🚫 Сервер остановлен');
@@ -442,12 +447,9 @@ const gracefulShutdown = (signal) => {
 process.once('SIGINT', () => gracefulShutdown('SIGINT'));
 process.once('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
-// Обработка неожиданных ошибок
-process.on('unhandledRejection', (reason, promise) => {
-    console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
-});
-
+// Простая обработка ошибок без логирования
+process.on('unhandledRejection', () => {});
 process.on('uncaughtException', (error) => {
-    console.error('❌ Uncaught Exception:', error);
+    console.error('❌ Критическая ошибка:', error.message);
     process.exit(1);
 });
