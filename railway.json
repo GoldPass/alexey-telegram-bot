@@ -1,12 +1,14 @@
 {
   "build": {
     "builder": "NIXPACKS",
-    "buildCommand": "npm install --omit=dev --no-audit --quiet"
+    "buildCommand": "npm ci --omit=dev --no-audit --no-fund --quiet"
   },
   "deploy": {
     "startCommand": "npm start",
     "restartPolicyType": "ON_FAILURE",
-    "restartPolicyMaxRetries": 3,
-    "healthcheckPath": "/health"
+    "restartPolicyMaxRetries": 5,
+    "healthcheckPath": "/health",
+    "healthcheckTimeout": 300,
+    "sleepApplication": false
   }
 }

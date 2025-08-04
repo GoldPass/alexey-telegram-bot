@@ -17,6 +17,8 @@ const axios = require('axios');
 // Проверяем переменные окружения
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const USE_WEBHOOK = process.env.USE_WEBHOOK === 'true';
+const WEBHOOK_URL = process.env.WEBHOOK_URL;
 
 if (!BOT_TOKEN || !GEMINI_API_KEY) {
   console.error('❌ Токены не найдены! Проверьте переменные окружения.');
@@ -32,7 +34,6 @@ const bot = new Telegraf(BOT_TOKEN, {
     webhookReply: false
   }
 });
-
 
 // Middleware для парсинга JSON
 app.use(express.json());
@@ -91,6 +92,7 @@ bot.command('status', (ctx) => {
 ⏱ Uptime: ${Math.floor(process.uptime())} сек
 💾 Node.js: ${process.version}
 🌐 Сервер: Онлайн
+🔗 Режим: ${USE_WEBHOOK ? 'Webhook' : 'Polling'}
 
 🤖 Готов к работе!
     `;
@@ -189,13 +191,24 @@ bot.on('document', (ctx) => {
     ctx.reply('📄 Интересный документ! Но я работаю только с текстовыми сообщениями. Скопируйте нужный текст!');
 });
 
-// Обработка ошибок бота (игнорируем 409 ошибки)
+// Обработка ошибок бота
 bot.catch((err, ctx) => {
-  if (err.description && err.description.includes('Conflict')) {
-    return; // Игнорируем ошибку 409
+  // 409 ошибки обрабатываем отдельно
+  if (err.code === 409 || (err.description && err.description.includes('Conflict'))) {
+    console.log('ℹ️ Конфликт с другим экземпляром бота (игнорируем)');
+    return;
   }
-  console.error('❌ Ошибка бота:', err);
-  ctx?.reply?.('😔 Произошла ошибка. Попробуйте снова.');
+  
+  console.error('❌ Ошибка бота:', err.message || err);
+  
+  // Пытаемся ответить пользователю только если контекст доступен
+  if (ctx && ctx.reply) {
+    try {
+      ctx.reply('😔 Произошла ошибка. Попробуйте снова.');
+    } catch (replyError) {
+      console.error('❌ Не удалось отправить сообщение об ошибке:', replyError.message);
+    }
+  }
 });
 
 // === ВЕБ-СЕРВЕР ===
@@ -310,6 +323,7 @@ app.get('/', (req, res) => {
             <div class="status">
                 <h3>✅ Бот работает и готов помочь!</h3>
                 <p>Сервер запущен на порту ${process.env.PORT || 3000}</p>
+                <p>Режим: ${USE_WEBHOOK ? 'Webhook' : 'Polling'}</p>
                 <p>Время: ${new Date().toLocaleString('ru-RU')}</p>
             </div>
 
@@ -360,6 +374,7 @@ app.get('/api/status', (req, res) => {
         status: 'online',
         bot: 'active',
         ai: 'gemini-connected',
+        mode: USE_WEBHOOK ? 'webhook' : 'polling',
         timestamp: new Date().toISOString(),
         uptime: process.uptime(),
         version: '1.0.0'
@@ -368,66 +383,122 @@ app.get('/api/status', (req, res) => {
 
 // Health check для Railway
 app.get('/health', (req, res) => {
-    res.status(200).send('OK');
+    res.status(200).json({ 
+        status: 'OK', 
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime()
+    });
 });
 
-// Webhook для Telegram (если нужен)
+// Webhook для Telegram
 app.post('/webhook', (req, res) => {
-    bot.handleUpdate(req.body);
-    res.sendStatus(200);
+    try {
+        bot.handleUpdate(req.body);
+        res.sendStatus(200);
+    } catch (error) {
+        console.error('❌ Ошибка обработки webhook:', error.message);
+        res.sendStatus(500);
+    }
 });
+
+// Функция безопасной остановки бота
+async function stopBot() {
+    try {
+        if (bot) {
+            console.log('🛑 Остановка бота...');
+            await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+            bot.stop();
+            console.log('✅ Бот остановлен');
+        }
+    } catch (error) {
+        console.log('ℹ️ Ошибка при остановке бота (игнорируем):', error.message);
+    }
+}
+
+// Функция безопасного запуска бота
+async function startBot() {
+    try {
+        console.log('🔄 Настройка бота...');
+        
+        // Сначала удаляем все webhook'и и обновления
+        await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+        console.log('🗑️ Webhook удален');
+        
+        // Небольшая пауза для стабилизации
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        if (USE_WEBHOOK && WEBHOOK_URL) {
+            // Используем webhook режим
+            console.log('🪝 Настройка webhook режима...');
+            await bot.telegram.setWebhook(`${WEBHOOK_URL}/webhook`);
+            console.log('✅ Webhook установлен:', `${WEBHOOK_URL}/webhook`);
+        } else {
+            // Используем polling режим
+            console.log('📡 Запуск в polling режиме...');
+            await bot.launch({
+                polling: {
+                    timeout: 30,
+                    limit: 100,
+                    allowedUpdates: ['message', 'callback_query']
+                }
+            });
+            console.log('✅ Polling режим активен');
+        }
+        
+        console.log('🤖 Telegram бот готов к работе!');
+        
+    } catch (error) {
+        if (error.code === 409 || (error.description && error.description.includes('Conflict'))) {
+            console.log('⚠️ Конфликт: другой экземпляр бота уже работает');
+            console.log('ℹ️ Попытка работы в ограниченном режиме...');
+        } else {
+            console.error('❌ Ошибка запуска бота:', error.message);
+            // Не прерываем работу сервера из-за ошибки бота
+        }
+    }
+}
 
 // Запуск сервера
 const PORT = process.env.PORT || 3000;
 let serverInstance = null;
-let botStarted = false;
 
-// Инициализация бота
-async function initializeBot() {
-  if (botStarted) return;
-  
-  try {
-    console.log('🪝 Удаляем вебхук...');
-    await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+// Сначала запускаем веб-сервер
+serverInstance = app.listen(PORT, '0.0.0.0', async () => {
+    console.log(`🌐 Веб-сервер запущен на порту ${PORT}`);
+    console.log(`🔗 Режим: ${USE_WEBHOOK ? 'Webhook' : 'Polling'}`);
     
-    // Добавляем задержку перед запуском
-    await new Promise(resolve => setTimeout(resolve, 5000));
+    // Затем запускаем бота с задержкой
+    setTimeout(startBot, 3000);
+});
+
+// Graceful shutdown с правильной обработкой
+const gracefulShutdown = async (signal) => {
+    console.log(`🛑 Получен сигнал ${signal}, начинаем остановку...`);
     
-    console.log('🚀 Запускаем бота...');
-    await bot.launch();
-    botStarted = true;
-    console.log('🤖 Telegram бот запущен и готов к работе!');
-  } catch (error) {
-    // Игнорируем ошибку 409 - бот уже запущен
-    if (error.description && error.description.includes('Conflict')) {
-      console.log('ℹ️ Бот уже активен в другом процессе');
-      botStarted = true;
-    } else {
-      console.error('❌ Ошибка запуска бота:', error.message);
+    // Останавливаем сервер
+    if (serverInstance) {
+        serverInstance.close(() => {
+            console.log('🌐 Веб-сервер остановлен');
+        });
     }
-  }
-}
+    
+    // Останавливаем бота
+    await stopBot();
+    
+    console.log('✅ Приложение корректно остановлено');
+    process.exit(0);
+};
 
-// Запускаем веб-сервер
-serverInstance = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🌐 Веб-сервер запущен на порту ${PORT}`);
-  console.log(`🚀 Всё готово! Время: ${new Date().toLocaleString('ru-RU')}`);
+// Обработка сигналов завершения
+process.once('SIGINT', () => gracefulShutdown('SIGINT'));
+process.once('SIGTERM', () => gracefulShutdown('SIGTERM'));
+
+// Обработка необработанных ошибок
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('❌ Необработанное отклонение промиса:', reason);
 });
 
-// Запускаем бота через 5 секунд после старта сервера
-setTimeout(initializeBot, 5000);
-
-// Graceful shutdown
-process.once('SIGINT', () => {
-    console.log('🛑 Получен SIGINT, остановка...');
-    if (botStarted) bot.stop('SIGINT');
-    if (serverInstance) serverInstance.close();
-    process.exit(0);
-});
-
-process.once('SIGTERM', () => {
-    console.log('🛑 Получен SIGTERM, остановка...');
-    if (botStarted) bot.stop('SIGTERM');
-    if (serverInstance) serverInstance.close();
-    process.exit(0);
+process.on('uncaughtException', (error) => {
+    console.error('❌ Необработанное исключение:', error.message);
+    gracefulShutdown('UNCAUGHT_EXCEPTION');
 });
