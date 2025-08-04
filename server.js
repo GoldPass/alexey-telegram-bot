@@ -1,6 +1,6 @@
 require('dotenv').config();
 
-// Подавляем все предупреждения для чистых логов
+// Полностью подавляем все предупреждения Node.js
 process.removeAllListeners('warning');
 process.on('warning', () => {});
 
@@ -53,7 +53,7 @@ bot.start((ctx) => {
 
 Просто напишите мне любой вопрос, и я постараюсь помочь! 😊
 
-Разработчик: @alexeuuu (Алексей)
+Разработчик: (Алексей)
 `;
     ctx.reply(welcomeMessage);
 });
@@ -189,16 +189,13 @@ bot.on('document', (ctx) => {
     ctx.reply('📄 Интересный документ! Но я работаю только с текстовыми сообщениями. Скопируйте нужный текст!');
 });
 
-// Обработка ошибок бота
+// Обработка ошибок бота (игнорируем 409 ошибки)
 bot.catch((err, ctx) => {
-  // Игнорируем ошибку 409 (Conflict) - она не критична
   if (err.description && err.description.includes('Conflict')) {
-    return;
+    return; // Игнорируем ошибку 409
   }
-  console.error('❌ Ошибка бота:', err.message || err);
-  if (ctx && ctx.reply) {
-    ctx.reply('😔 Произошла ошибка. Попробуйте снова.');
-  }
+  console.error('❌ Ошибка бота:', err);
+  ctx?.reply?.('😔 Произошла ошибка. Попробуйте снова.');
 });
 
 // === ВЕБ-СЕРВЕР ===
@@ -211,7 +208,7 @@ app.get('/', (req, res) => {
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>🤖 AI Telegram Bot - Алексей</title>
+        <title>🤖 AI Telegram Bot</title>
         <style>
             * {
                 margin: 0;
@@ -364,15 +361,20 @@ app.get('/api/status', (req, res) => {
         bot: 'active',
         ai: 'gemini-connected',
         timestamp: new Date().toISOString(),
-        uptime: Math.floor(process.uptime()),
-        version: '1.0.0',
-        node_version: process.version
+        uptime: process.uptime(),
+        version: '1.0.0'
     });
 });
 
 // Health check для Railway
 app.get('/health', (req, res) => {
     res.status(200).send('OK');
+});
+
+// Webhook для Telegram (если нужен)
+app.post('/webhook', (req, res) => {
+    bot.handleUpdate(req.body);
+    res.sendStatus(200);
 });
 
 // Запуск сервера
@@ -389,7 +391,7 @@ async function initializeBot() {
     await bot.telegram.deleteWebhook({ drop_pending_updates: true });
     
     // Добавляем задержку перед запуском
-    await new Promise(resolve => setTimeout(resolve, 3000));
+    await new Promise(resolve => setTimeout(resolve, 5000));
     
     console.log('🚀 Запускаем бота...');
     await bot.launch();
