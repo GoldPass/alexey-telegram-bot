@@ -1,12 +1,14 @@
 require('dotenv').config();
 
-// Временная диагностика переменных окружения
-console.log('====== ПРОВЕРКА ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ======');
-console.log('BOT_TOKEN:', process.env.BOT_TOKEN ? 'ЕСТЬ' : 'НЕТ');
-console.log('GEMINI_API_KEY:', process.env.GEMINI_API_KEY ? 'ЕСТЬ' : 'НЕТ');
-console.log('PORT:', process.env.PORT || 'не указан');
-console.log('NODE_ENV:', process.env.NODE_ENV || 'не указан');
-console.log('==========================================');
+// Подавляем предупреждения Node.js
+process.removeAllListeners('warning');
+process.on('warning', (warning) => {
+  // Игнорируем предупреждения о punycode и других deprecated модулях
+  if (warning.name === 'DeprecationWarning') {
+    return;
+  }
+  console.warn(warning.name, warning.message);
+});
 
 const express = require('express');
 const { Telegraf } = require('telegraf');
@@ -33,7 +35,7 @@ console.log('✅ Токены найдены');
 const app = express();
 const bot = new Telegraf(BOT_TOKEN, {
   telegram: {
-    testEnv: process.env.NODE_ENV !== 'production',
+    testEnv: false,
     apiRoot: 'https://api.telegram.org',
     webhookReply: false
   }
@@ -198,11 +200,12 @@ bot.on('document', (ctx) => {
 bot.catch((err, ctx) => {
   // Игнорируем ошибку 409 (Conflict)
   if (err.description && err.description.includes('terminated by other getUpdates request')) {
-    console.warn('⚠️ Игнорируем ошибку 409: другой экземпляр бота уже запущен');
     return;
   }
   console.error('❌ Ошибка бота:', err);
-  ctx?.reply?.('😔 Произошла ошибка. Попробуйте снова.');
+  if (ctx && ctx.reply) {
+    ctx.reply('😔 Произошла ошибка. Попробуйте снова.');
+  }
 });
 
 // === ВЕБ-СЕРВЕР ===
@@ -215,7 +218,7 @@ app.get('/', (req, res) => {
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>🤖 AI Telegram Bot</title>
+        <title>🤖 AI Telegram Bot - Алексей</title>
         <style>
             * {
                 margin: 0;
@@ -291,6 +294,22 @@ app.get('/', (req, res) => {
                 font-weight: bold;
                 color: #007bff;
             }
+
+            .telegram-link {
+                display: inline-block;
+                background: #0088cc;
+                color: white;
+                padding: 15px 30px;
+                border-radius: 10px;
+                text-decoration: none;
+                margin-top: 20px;
+                font-weight: bold;
+                transition: background 0.3s;
+            }
+
+            .telegram-link:hover {
+                background: #006699;
+            }
         </style>
     </head>
     <body>
@@ -321,6 +340,10 @@ app.get('/', (req, res) => {
                 </ul>
             </div>
 
+            <a href="https://t.me/akauntvanish_ai_bot" target="_blank" class="telegram-link">
+                📱 Открыть бота в Telegram
+            </a>
+
             <div class="stats">
                 <div class="stat">
                     <div class="stat-number">24/7</div>
@@ -348,9 +371,15 @@ app.get('/api/status', (req, res) => {
         bot: 'active',
         ai: 'gemini-connected',
         timestamp: new Date().toISOString(),
-        uptime: process.uptime(),
-        version: '1.0.0'
+        uptime: Math.floor(process.uptime()),
+        version: '1.0.0',
+        node_version: process.version
     });
+});
+
+// Health check для Railway
+app.get('/health', (req, res) => {
+    res.status(200).send('OK');
 });
 
 // Webhook для Telegram (если нужен)
@@ -366,9 +395,6 @@ let serverInstance = null;
 // Инициализация бота
 async function initializeBot() {
   try {
-    console.log('⏳ Ожидание 5 секунд перед запуском...');
-    await new Promise(resolve => setTimeout(resolve, 5000));
-    
     console.log('🪝 Удаляем вебхук...');
     await bot.telegram.deleteWebhook({ drop_pending_updates: true });
     console.log('✅ Вебхук удален');
@@ -385,10 +411,10 @@ async function initializeBot() {
   } catch (error) {
     console.error('❌ Ошибка запуска бота:', error);
     
-    // Если это ошибка 409, попробуем через 5 секунд
+    // Если это ошибка 409, попробуем через 3 секунды
     if (error.description && error.description.includes('Conflict')) {
-      console.log('⏱ Повторная попытка через 5 секунд...');
-      setTimeout(initializeBot, 5000);
+      console.log('⏱ Повторная попытка через 3 секунды...');
+      setTimeout(initializeBot, 3000);
     } else {
       console.error('❌ Критическая ошибка, завершение работы');
       process.exit(1);
@@ -400,9 +426,9 @@ async function initializeBot() {
 initializeBot();
 
 // Graceful shutdown
-process.once('SIGINT', () => {
-    console.log('🛑 Получен SIGINT, остановка...');
-    bot.stop('SIGINT');
+const gracefulShutdown = (signal) => {
+    console.log(`🛑 Получен ${signal}, остановка...`);
+    bot.stop(signal);
     if (serverInstance) {
         serverInstance.close(() => {
             console.log('🚫 Сервер остановлен');
@@ -411,20 +437,10 @@ process.once('SIGINT', () => {
     } else {
         process.exit(0);
     }
-});
+};
 
-process.once('SIGTERM', () => {
-    console.log('🛑 Получен SIGTERM, остановка...');
-    bot.stop('SIGTERM');
-    if (serverInstance) {
-        serverInstance.close(() => {
-            console.log('🚫 Сервер остановлен');
-            process.exit(0);
-        });
-    } else {
-        process.exit(0);
-    }
-});
+process.once('SIGINT', () => gracefulShutdown('SIGINT'));
+process.once('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
 // Обработка неожиданных ошибок
 process.on('unhandledRejection', (reason, promise) => {
