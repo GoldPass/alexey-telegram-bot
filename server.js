@@ -22,7 +22,13 @@ if (!GEMINI_API_KEY) {
 console.log('✅ Токены найдены');
 
 const app = express();
-const bot = new Telegraf(BOT_TOKEN);
+const bot = new Telegraf(BOT_TOKEN, {
+  telegram: {
+    testEnv: process.env.NODE_ENV !== 'production',
+    apiRoot: 'https://api.telegram.org',
+    webhookReply: false
+  }
+});
 
 // Middleware для парсинга JSON
 app.use(express.json());
@@ -91,7 +97,7 @@ bot.command('status', (ctx) => {
 async function askGemini(question) {
     try {
         console.log('🧠 Отправляем запрос к Gemini AI...');
-        
+
         const response = await axios.post(
             `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`,
             {
@@ -123,7 +129,7 @@ async function askGemini(question) {
         }
     } catch (error) {
         console.error('❌ Ошибка при обращении к Gemini API:', error.response?.data || error.message);
-        
+
         if (error.response?.status === 429) {
             return "⏰ Слишком много запросов. Подождите немного и попробуйте снова.";
         } else if (error.response?.status === 403) {
@@ -140,15 +146,15 @@ async function askGemini(question) {
 bot.on('text', async (ctx) => {
     const userMessage = ctx.message.text;
     const userName = ctx.from.first_name || 'Пользователь';
-    
+
     console.log(`💬 Сообщение от ${userName}: ${userMessage}`);
-    
+
     // Показываем, что бот печатает
     await ctx.sendChatAction('typing');
-    
+
     try {
         const aiResponse = await askGemini(userMessage);
-        
+
         // Ограничиваем длину ответа (Telegram имеет лимит 4096 символов)
         if (aiResponse.length > 4000) {
             const truncatedResponse = aiResponse.substring(0, 4000) + "...\n\n📝 Ответ был сокращен из-за ограничений Telegram.";
@@ -181,11 +187,16 @@ bot.on('document', (ctx) => {
 
 // Обработка ошибок бота
 bot.catch((err, ctx) => {
-    console.error('❌ Ошибка бота:', err);
-    ctx.reply('😔 Произошла ошибка. Попробуйте снова.');
+  // Игнорируем ошибку 409 (Conflict)
+  if (err.description && err.description.includes('terminated by other getUpdates request')) {
+    console.warn('⚠️ Игнорируем ошибку 409: другой экземпляр бота уже запущен');
+    return;
+  }
+  console.error('❌ Ошибка бота:', err);
+  ctx?.reply?.('😔 Произошла ошибка. Попробуйте снова.');
 });
 
-// === ВЕБЕРВ ===
+// === ВЕБ-СЕРВЕР ===
 
 // Главная страница
 app.get('/', (req, res) => {
@@ -202,7 +213,7 @@ app.get('/', (req, res) => {
                 padding: 0;
                 box-sizing: border-box;
             }
-            
+
             body {
                 font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
                 background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -211,7 +222,7 @@ app.get('/', (req, res) => {
                 align-items: center;
                 justify-content: center;
             }
-            
+
             .container {
                 background: white;
                 padding: 40px;
@@ -221,7 +232,7 @@ app.get('/', (req, res) => {
                 max-width: 600px;
                 width: 90%;
             }
-            
+
             .status {
                 background: #d4edda;
                 color: #155724;
@@ -230,7 +241,7 @@ app.get('/', (req, res) => {
                 margin: 20px 0;
                 border: 2px solid #c3e6cb;
             }
-            
+
             .ai-info {
                 background: #e3f2fd;
                 color: #1565c0;
@@ -239,33 +250,33 @@ app.get('/', (req, res) => {
                 margin: 20px 0;
                 border: 2px solid #bbdefb;
             }
-            
+
             h1 {
                 color: #333;
                 margin-bottom: 20px;
                 font-size: 2.5em;
             }
-            
+
             .emoji {
                 font-size: 4em;
                 margin-bottom: 20px;
             }
-            
+
             .features {
                 text-align: left;
                 margin: 20px 0;
             }
-            
+
             .stats {
                 display: flex;
                 justify-content: space-around;
                 margin-top: 20px;
             }
-            
+
             .stat {
                 text-align: center;
             }
-            
+
             .stat-number {
                 font-size: 1.5em;
                 font-weight: bold;
@@ -277,18 +288,18 @@ app.get('/', (req, res) => {
         <div class="container">
             <div class="emoji">🤖</div>
             <h1>AI Telegram Bot</h1>
-            
+
             <div class="status">
                 <h3>✅ Бот работает и готов помочь!</h3>
                 <p>Сервер запущен на порту ${process.env.PORT || 3000}</p>
                 <p>Время: ${new Date().toLocaleString('ru-RU')}</p>
             </div>
-            
+
             <div class="ai-info">
                 <h3>🧠 Powered by Google Gemini AI</h3>
                 <p>Умный помощник, готовый ответить на любые вопросы</p>
             </div>
-            
+
             <div class="features">
                 <h3>✨ Возможности бота:</h3>
                 <ul>
@@ -300,7 +311,7 @@ app.get('/', (req, res) => {
                     <li>🧮 Решает математические задачи</li>
                 </ul>
             </div>
-            
+
             <div class="stats">
                 <div class="stat">
                     <div class="stat-number">24/7</div>
@@ -342,12 +353,15 @@ app.post('/webhook', (req, res) => {
 // Запуск сервера
 const PORT = process.env.PORT || 3000;
 
+// Ссылка на сервер Express
+let serverInstance = null;
+
 // Сначала запускаем бота
 bot.launch().then(() => {
     console.log('🤖 Telegram бот запущен и готов к работе!');
-    
+
     // Затем запускаем веб-сервер
-    app.listen(PORT, '0.0.0.0', () => {
+    serverInstance = app.listen(PORT, '0.0.0.0', () => {
         console.log(`🌐 Веб-сервер запущен на порту ${PORT}`);
         console.log(`🚀 Всё готово! Время: ${new Date().toLocaleString('ru-RU')}`);
     });
@@ -360,13 +374,19 @@ bot.launch().then(() => {
 process.once('SIGINT', () => {
     console.log('🛑 Получен SIGINT, остановка...');
     bot.stop('SIGINT');
-    process.exit(0);
+    serverInstance?.close(() => {
+        console.log('🚫 Сервер остановлен');
+        process.exit(0);
+    });
 });
 
 process.once('SIGTERM', () => {
     console.log('🛑 Получен SIGTERM, остановка...');
     bot.stop('SIGTERM');
-    process.exit(0);
+    serverInstance?.close(() => {
+        console.log('🚫 Сервер остановлен');
+        process.exit(0);
+    });
 });
 
 // Обработка неожиданных ошибок
@@ -377,12 +397,4 @@ process.on('unhandledRejection', (reason, promise) => {
 process.on('uncaughtException', (error) => {
     console.error('❌ Uncaught Exception:', error);
     process.exit(1);
-});
-process.on('SIGTERM', () => {
-  console.log('🛑 Получен SIGTERM, остановка...');
-  bot.stop('SIGTERM');
-  server.close(() => {
-    console.log('🚫 Сервер остановлен');
-    process.exit(0);
-  });
 });
