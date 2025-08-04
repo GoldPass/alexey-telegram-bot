@@ -1,8 +1,8 @@
 require('dotenv').config();
 
-// Подавляем все предупреждения Node.js для чистых логов
+// Подавляем все предупреждения для чистых логов
 process.removeAllListeners('warning');
-process.on('warning', () => {}); // Полностью игнорируем предупреждения
+process.on('warning', () => {});
 
 const express = require('express');
 const { Telegraf } = require('telegraf');
@@ -29,7 +29,6 @@ console.log('✅ Токены найдены');
 const app = express();
 const bot = new Telegraf(BOT_TOKEN, {
   telegram: {
-    testEnv: false,
     apiRoot: 'https://api.telegram.org',
     webhookReply: false
   }
@@ -190,13 +189,12 @@ bot.on('document', (ctx) => {
     ctx.reply('📄 Интересный документ! Но я работаю только с текстовыми сообщениями. Скопируйте нужный текст!');
 });
 
-// Обработка ошибок бота (полностью скрываем 409 ошибки)
+// Обработка ошибок бота
 bot.catch((err, ctx) => {
-  // Полностью игнорируем все конфликты - они не критичны
-  if (err.description && (err.description.includes('terminated by other getUpdates') || err.description.includes('Conflict'))) {
+  // Игнорируем ошибку 409 (Conflict) - она не критична
+  if (err.description && err.description.includes('Conflict')) {
     return;
   }
-  // Остальные ошибки логируем
   console.error('❌ Ошибка бота:', err.message || err);
   if (ctx && ctx.reply) {
     ctx.reply('😔 Произошла ошибка. Попробуйте снова.');
@@ -382,74 +380,52 @@ const PORT = process.env.PORT || 3000;
 let serverInstance = null;
 let botStarted = false;
 
-// Инициализация бота с улучшенной обработкой ошибок
+// Инициализация бота
 async function initializeBot() {
-  if (botStarted) {
-    console.log('🔄 Бот уже запущен, пропускаем...');
-    return;
-  }
-
+  if (botStarted) return;
+  
   try {
-    console.log('🪝 Настраиваем бота...');
-    
-    // Удаляем вебхук и очищаем очередь обновлений
+    console.log('🪝 Удаляем вебхук...');
     await bot.telegram.deleteWebhook({ drop_pending_updates: true });
     
-    // Ждем немного перед запуском
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    // Добавляем задержку перед запуском
+    await new Promise(resolve => setTimeout(resolve, 3000));
     
     console.log('🚀 Запускаем бота...');
     await bot.launch();
     botStarted = true;
     console.log('🤖 Telegram бот запущен и готов к работе!');
-
   } catch (error) {
-    // Если ошибка 409 - просто пропускаем, бот уже работает где-то
+    // Игнорируем ошибку 409 - бот уже запущен
     if (error.description && error.description.includes('Conflict')) {
       console.log('ℹ️ Бот уже активен в другом процессе');
       botStarted = true;
     } else {
       console.error('❌ Ошибка запуска бота:', error.message);
-      // Повторяем попытку через 5 секунд только если это не конфликт
-      setTimeout(() => {
-        botStarted = false;
-        initializeBot();
-      }, 5000);
     }
   }
 }
 
-// Запускаем веб-сервер сразу (он не зависит от бота)
+// Запускаем веб-сервер
 serverInstance = app.listen(PORT, '0.0.0.0', () => {
   console.log(`🌐 Веб-сервер запущен на порту ${PORT}`);
   console.log(`🚀 Всё готово! Время: ${new Date().toLocaleString('ru-RU')}`);
 });
 
-// Запускаем бота отдельно
-initializeBot();
+// Запускаем бота через 5 секунд после старта сервера
+setTimeout(initializeBot, 5000);
 
-// Graceful shutdown (упрощенный)
-const gracefulShutdown = (signal) => {
-    console.log(`🛑 Получен ${signal}, остановка...`);
-    if (botStarted) {
-      bot.stop(signal);
-    }
-    if (serverInstance) {
-        serverInstance.close(() => {
-            console.log('🚫 Сервер остановлен');
-            process.exit(0);
-        });
-    } else {
-        process.exit(0);
-    }
-};
+// Graceful shutdown
+process.once('SIGINT', () => {
+    console.log('🛑 Получен SIGINT, остановка...');
+    if (botStarted) bot.stop('SIGINT');
+    if (serverInstance) serverInstance.close();
+    process.exit(0);
+});
 
-process.once('SIGINT', () => gracefulShutdown('SIGINT'));
-process.once('SIGTERM', () => gracefulShutdown('SIGTERM'));
-
-// Простая обработка ошибок без логирования
-process.on('unhandledRejection', () => {});
-process.on('uncaughtException', (error) => {
-    console.error('❌ Критическая ошибка:', error.message);
-    process.exit(1);
+process.once('SIGTERM', () => {
+    console.log('🛑 Получен SIGTERM, остановка...');
+    if (botStarted) bot.stop('SIGTERM');
+    if (serverInstance) serverInstance.close();
+    process.exit(0);
 });
